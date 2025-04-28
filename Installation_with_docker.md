@@ -21,7 +21,7 @@ sudo docker run --platform linux/amd64 --rm -it -v "$(pwd)/CSEx61-dockerized-pin
 ```
 Note: If you got an error which is related to specifying container image platform use this command instead:
 ```
-sudo docker run --rm -it -v "$(pwd)/CSEx61-dockerized-pintos:/root/pintos" a85bf0a348d6
+sudo docker run --rm -it -v "$(pwd)/PintOS-project:/root/pintos" 47a83b2b7454
 ```
 6) You should now be inside of the running container. Navigate to:
 ```
