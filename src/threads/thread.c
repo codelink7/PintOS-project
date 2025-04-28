@@ -79,11 +79,93 @@ static tid_t allocate_tid (void);
    Also initializes the run queue and the tid lock.
 
    After calling this function, be sure to initialize the page
-   allocator before trying to create any threads with
+   allocator before trying tcmp_lock_priorityo create any threads with
    thread_create().
 
    It is not safe to call thread_current() until this function
    finishes. */
+
+
+/* added section */
+
+// compare thread priorities
+
+bool thread_priority_greater (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+  struct thread *thread_a = list_entry(a, struct thread, elem);
+  struct thread *thread_b = list_entry(b, struct thread, elem);
+  return thread_a->priority > thread_b->priority;
+}
+
+
+bool lock_priority_greater(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  return list_entry(a, struct lock, elem)->lock_max_priority > list_entry(b, struct lock, elem)->lock_max_priority;
+}
+// updating the priority
+
+void thread_update_priority (struct thread *t) {
+  enum intr_level old_level = intr_disable();
+  int max_priority = t->base_priority, lock_priority;
+
+  struct lock *front;
+  if (!list_empty(&t->locks_holder)) {
+    list_sort(&t->locks_holder, lock_priority_greater, NULL);
+    front = list_entry(list_front(&t->locks_holder), struct lock, elem);
+    lock_priority = front->lock_max_priority;
+
+    if (max_priority < lock_priority) max_priority = lock_priority;
+  }
+
+  t->priority = max_priority;
+
+  intr_set_level(old_level);
+}
+
+// priority donation
+
+void thread_donate_priority(struct thread *t) {
+  enum intr_level old_level = intr_disable();
+
+  thread_update_priority(t);
+
+  /* remove old t then insert a new one */
+
+  if (t->status == THREAD_READY) {
+    list_remove(&t->elem);
+    list_insert_ordered(&ready_list, &t->elem, thread_priority_greater, NULL);
+  }
+
+  // note this
+  intr_set_level(old_level);
+}
+
+/* aquire lock from thread*/
+void thread_lock_aquire(struct lock *lock) {
+  enum intr_level old_level = intr_disable();
+
+  struct thread *current = thread_current();
+
+  list_insert_ordered(&current->locks_holder, &lock->elem, lock_priority_greater, NULL);
+
+  /* Priority Donation */
+  if (current->priority < lock->lock_max_priority) {
+    current->priority = lock->lock_max_priority;
+    thread_yield();
+  }
+
+  intr_set_level(old_level);
+}
+
+/* release lock from thread */
+void thread_release_lock(struct lock *lock) {
+  enum intr_level old_level = intr_disable();
+
+  list_remove(&lock->elem);
+  thread_update_priority(thread_current());
+
+  intr_set_level(old_level);
+}
+
 void
 thread_init (void) 
 {
@@ -98,6 +180,8 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
+
+  
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -147,6 +231,8 @@ thread_print_stats (void)
           idle_ticks, kernel_ticks, user_ticks);
 }
 
+
+
 /* Creates a new kernel thread named NAME with the given initial
    PRIORITY, which executes FUNCTION passing AUX as the argument,
    and adds it to the ready queue.  Returns the thread identifier
@@ -172,6 +258,8 @@ thread_create (const char *name, int priority,
   struct switch_threads_frame *sf;
   tid_t tid;
 
+  enum intr_level old_level;    // Interrupt level
+
   ASSERT (function != NULL);
 
   /* Allocate thread. */
@@ -182,6 +270,8 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+
+  old_level = intr_disable();
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -200,6 +290,11 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+
+  // run thread with the higher priority
+  if (thread_current()->priority < t->priority) {
+    thread_yield();
+  }
 
   return tid;
 }
@@ -237,7 +332,8 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  list_insert_ordered (&ready_list, &t->elem, (list_less_func*)&thread_priority_greater, NULL);
+  //list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -252,6 +348,8 @@ thread_name (void)
 /* Returns the running thread.
    This is running_thread() plus a couple of sanity checks.
    See the big comment at the top of thread.h for details. */
+
+
 struct thread *
 thread_current (void) 
 {
@@ -308,7 +406,7 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    list_insert_ordered(&ready_list, &cur->elem, (list_less_func*)&thread_priority_greater, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -335,7 +433,22 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  if (thread_mlfqs) return;
+
+  enum intr_level old_level = intr_disable();
+
+  struct thread *current = thread_current();
+  int old_priority = current->priority;
+
+  current->base_priority = new_priority;
+
+  if (list_empty(&current->locks_holder) || new_priority > old_priority) {
+    current->priority = new_priority;
+    thread_yield();
+  }
+
+
+  intr_set_level(old_level);
 }
 
 /* Returns the current thread's priority. */
@@ -464,8 +577,15 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
+  // added section
+  list_init(&t->locks_holder);
+  t->base_priority = priority;
+  t->waiting_lock = NULL;
   old_level = intr_disable ();
-  list_push_back (&all_list, &t->allelem);
+
+
+  list_insert_ordered(&all_list, &t->allelem, (list_less_func*)&thread_priority_greater, NULL);
+  //list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
 }
 
