@@ -132,7 +132,7 @@ void thread_donate_priority(struct thread *t) {
 
   if (t->status == THREAD_READY) {
     list_remove(&t->elem);
-    list_insert_ordered(&ready_list, &t->elem, thread_priority_greater, NULL);
+    list_insert_ordered(&ready_list, &t->elem, (list_less_func *)&thread_priority_greater, NULL);
   }
 
   // note this
