@@ -1,4 +1,5 @@
 #include "threads/thread.h"
+#include "threads/fixed-point.h"
 #include <debug.h>
 #include <stddef.h>
 #include <random.h>
@@ -70,6 +71,31 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+// static void update_priority(struct thread *t);
+// static void update_recent_cpu(struct thread *t);  
+// static void update_load_avg(void);
+
+/* Helper functions for MLFQS scheduler */
+
+static void calculate_priority (struct thread *t);
+
+static void calculate_recent_cpu (struct thread *t);
+
+static void recalculate_recent_cpu_func (struct thread *t, void *aux UNUSED);
+
+static void recalculate_priority_func (struct thread *t, void *aux UNUSED);
+
+static void test_max_priority (void);
+
+
+bool  thread_compare_priority(const struct list_elem *a,  const struct list_elem *b, void *aux UNUSED)  
+{  
+    struct thread *ta = list_entry(a, struct thread, elem);  
+    struct thread *tb = list_entry(b, struct thread, elem);  
+    return ta->eff_priority > tb->eff_priority;  // Higher priority first  
+}  
+
+
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -174,6 +200,10 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+
+  /* Initialize load_avg to 0 */
+
+  load_avg = 0;
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -575,8 +605,39 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  t->eff_priority = priority;
+  list_init(&t->held_locks);
+  t->waitingfor = NULL;
+ 
   t->magic = THREAD_MAGIC;
 
+  if (thread_mlfqs) {
+  /* Initial thread starts with nice value of 0, others inherit from parent */
+
+    if (t == initial_thread)
+      t->nice = 0;
+    else
+      t->nice = thread_current ()->nice;
+
+    /* Initialize recent_cpu */
+
+    if (t == initial_thread)
+      t->recent_cpu = 0;
+    else
+
+    t->recent_cpu = thread_current ()->recent_cpu;
+  
+    /* Calculate initial priority using MLFQS formula */
+  
+      calculate_priority (t);
+  } else {
+    t->nice = 0;
+    t->recent_cpu = 0;
+    t->priority = priority;
+  }
+
+  
+  t->magic = THREAD_MAGIC;
   // added section
   list_init(&t->locks_holder);
   t->base_priority = priority;

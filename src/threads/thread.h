@@ -89,6 +89,7 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
+<<<<<<< Updated upstream
     int64_t wakeup_tick;                /* The time in which the thread should wake up*/
     /* added section */
     int base_priority;     
@@ -97,6 +98,16 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
    
+=======
+    struct lock *waitingfor;
+   int64_t wakeup_tick;                /* The time in which the thread should wake up*/
+   /*For mlfqs*/
+   int nice;                    /* Niceness value (-20 to 20) */
+   fixed_point_t recent_cpu;    /* Recent CPU usage estimate */
+
+   /* Shared between thread.c and synch.c. */
+   struct list_elem elem;              /* List element. */
+>>>>>>> Stashed changes
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
