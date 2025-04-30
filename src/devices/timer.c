@@ -98,15 +98,18 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
-  if (ticks <= 0) return;
-  int64_t start = timer_ticks ();
-  struct thread *current_thread = thread_current();
+  if (ticks <= 0)
+      return;
+      
+  struct  thread *t = thread_current();
+  t->wakeup_tick = timer_ticks () + ticks;
   ASSERT (intr_get_level () == INTR_ON);
-  enum intr_level old_level = intr_disable ();
-  current_thread->wakeup_tick = start + ticks;
-  list_insert_ordered(&threads_sleep_list, &current_thread->elem,
-  compare_threads_wakeup_ticks, NULL);
-  thread_block();
+
+  enum intr_level old_level = intr_disable (); //disable interrupts
+  list_insert_ordered(&threads_sleep_list, &t->elem,
+    compare_threads_wakeup_ticks, NULL);
+
+  thread_block ();
   intr_set_level (old_level);
 }
 
@@ -199,6 +202,34 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+
+  /* MLFQS scheduler updates */
+  if (thread_mlfqs)
+  {
+    enum intr_level old_level = intr_disable();
+    struct thread *t = thread_current ();
+
+    /* Increment recent_cpu for the running thread */
+    if (t != get_idle_thread())
+      t->recent_cpu = FP_ADD_INT(t->recent_cpu, 1);
+
+    /* Once per second, recalculate load_avg and recent_cpu for all threads */
+    if (timer_ticks () % TIMER_FREQ == 0)
+    {
+      calculate_load_avg ();
+      calculate_recent_cpu(t);
+    }
+
+    /* Every 4 ticks, recalculate priority for all threads */
+    if (timer_ticks () % 4 == 0)
+      thread_foreach (recalculate_priority_func, NULL);
+
+    // // Check if the current thread still has the highest priority
+    // // If not, yield by setting the interrupt flag.
+    // test_max_priority(); 
+    intr_set_level(old_level);
+  }
+
   while (!list_empty(&threads_sleep_list)){
     struct list_elem *front_thread_list_elem = list_front(&threads_sleep_list);
     struct thread *front_thread = list_entry(front_thread_list_elem, struct thread, elem);
