@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/fixed-point.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -89,8 +90,10 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
-<<<<<<< Updated upstream
     int64_t wakeup_tick;                /* The time in which the thread should wake up*/
+    /*For mlfqs*/
+    int nice;                    /* Niceness value (-20 to 20) */
+    fixed_point_t recent_cpu;    /* Recent CPU usage estimate */
     /* added section */
     int base_priority;     
     struct list locks_holder;
@@ -98,16 +101,6 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
    
-=======
-    struct lock *waitingfor;
-   int64_t wakeup_tick;                /* The time in which the thread should wake up*/
-   /*For mlfqs*/
-   int nice;                    /* Niceness value (-20 to 20) */
-   fixed_point_t recent_cpu;    /* Recent CPU usage estimate */
-
-   /* Shared between thread.c and synch.c. */
-   struct list_elem elem;              /* List element. */
->>>>>>> Stashed changes
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -149,13 +142,22 @@ void thread_foreach (thread_action_func *, void *);
 int thread_get_priority (void);
 void thread_set_priority (int);
 
+/*MLFQS*/
 int thread_get_nice (void);
 void thread_set_nice (int);
-int thread_get_recent_cpu (void);
-int thread_get_load_avg (void);
+fixed_point_t thread_get_recent_cpu (void);
+fixed_point_t thread_get_load_avg (void);
+
+/* Helper functions for MLFQS scheduler */
+void calculate_priority (struct thread *t);
+void calculate_recent_cpu (struct thread *t);
+void calculate_load_avg (void);
+void recalculate_recent_cpu_func (struct thread *t, void *aux UNUSED);
+void recalculate_priority_func (struct thread *t, void *aux UNUSED);
+struct thread *get_idle_thread(void);
+void test_max_priority (void);
 
 // added
-
 /* Priority donation functions */
 void thread_donate_priority(struct thread *t);
 void thread_lock_aquire(struct lock *lock);
