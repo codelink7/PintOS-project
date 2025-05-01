@@ -92,7 +92,8 @@ struct thread
     /* added section */
     int base_priority;     
     struct list locks_holder;
-    struct lock *waiting_lock;       // lock waiter            
+    struct lock *waiting_lock;       // lock waiter     
+    int64_t wakeup_tick; 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
