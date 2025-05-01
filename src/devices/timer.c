@@ -200,16 +200,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
   ticks++;
   thread_tick ();
   thread_tick();
-
   thread_tick();
-
-  if (thread_mlfqs) {
-    mlfqs_inc_recent_cpu();
-    if (ticks % TIMER_FREQ == 0)
-      mlfqs_calc_recent_cpu();
-    else if (ticks % 4 == 0)
-      mlfqs_calc_priority(thread_current());
-  }
   while (!list_empty(&threads_sleep_list)){
     struct list_elem *front_thread_list_elem = list_front(&threads_sleep_list);
     struct thread *front_thread = list_entry(front_thread_list_elem, struct thread, elem);
