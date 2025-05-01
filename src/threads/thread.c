@@ -146,7 +146,6 @@ void thread_update_priority (struct thread *t) {
 }
 
 // priority donation
-
 void thread_donate_priority(struct thread *t) {
   enum intr_level old_level = intr_disable();
 
@@ -165,6 +164,8 @@ void thread_donate_priority(struct thread *t) {
 
 /* aquire lock from thread*/
 void thread_lock_aquire(struct lock *lock) {
+
+  ASSERT (!intr_context ());
   enum intr_level old_level = intr_disable();
 
   struct thread *current = thread_current();
@@ -299,7 +300,7 @@ thread_create (const char *name, int priority,
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
 
-  old_level = intr_disable();
+  old_level = intr_disable (); // Disable interrupts
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -318,6 +319,8 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+
+  intr_set_level(old_level); // IT WAS THIS LINE !!!!!
 
   // run thread with the higher priority
   if (thread_current()->priority < t->priority) {
@@ -431,7 +434,6 @@ thread_yield (void)
   enum intr_level old_level;
   
   ASSERT (!intr_context ());
-
   old_level = intr_disable ();
   if (cur != idle_thread) 
     list_insert_ordered(&ready_list, &cur->elem, (list_less_func*)&thread_priority_greater, NULL);
@@ -539,9 +541,9 @@ thread_get_load_avg (void)
 fixed_point_t
 thread_get_recent_cpu (void) 
 {
-  enum intr_level old_level = intr_disable ();
+  // enum intr_level old_level = intr_disable ();
   int recent_cpu_times_100 = FP_TO_INT_ROUND_NEAREST(FP_MULT_INT(thread_current()->recent_cpu, 100));
-  intr_set_level (old_level);
+  // intr_set_level (old_level);
   return recent_cpu_times_100;
 }
 
@@ -663,7 +665,7 @@ test_max_priority (void)
     // Yield if a ready thread has higher priority.
     // Since this might be called from an interrupt handler (thread_tick),
     // set the flag to yield upon interrupt return.
-    intr_yield_on_return(); 
+    thread_yield(); 
   }
 }
 
