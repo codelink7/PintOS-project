@@ -112,18 +112,28 @@ void
 sema_up (struct semaphore *sema) 
 {
   enum intr_level old_level;
+  struct thread *unblocked_thread = NULL;
 
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
   if (!list_empty (&sema->waiters)) {
-    list_sort(&sema->waiters, cond_priority_greater, NULL);
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
-                                struct thread, elem));
+    // Sort the waiters list by priority
+    list_sort(&sema->waiters, (list_less_func*)&thread_priority_greater, NULL);
+    
+    // Unblock the highest priority waiter
+    unblocked_thread = list_entry(list_pop_front(&sema->waiters), struct thread, elem);
+    thread_unblock(unblocked_thread);
   }
     
   sema->value++;
-  thread_yield();
+  
+  // Only yield if we're not in an interrupt context and the unblocked thread
+  // has higher priority than the current thread
+  if (unblocked_thread != NULL && !intr_context() && 
+      unblocked_thread->priority > thread_current()->priority) {
+    thread_yield();
+  }
   intr_set_level (old_level);
 }
 
@@ -354,7 +364,7 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
   ASSERT (lock_held_by_current_thread (lock));
 
   if (!list_empty (&cond->waiters))  {
-    list_sort(&cond->waiters, (list_less_func*)&thread_priority_greater, NULL);
+    list_sort(&cond->waiters, cond_priority_greater, NULL);
     //list_push_back (&cond->waiters, &thread_current ()->elem);
     sema_up (&list_entry (list_pop_front (&cond->waiters),
                           struct semaphore_elem, elem)->semaphore);
