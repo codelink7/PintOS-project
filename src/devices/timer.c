@@ -16,7 +16,8 @@
 #if TIMER_FREQ > 1000
 #error TIMER_FREQ <= 1000 recommended
 #endif
-
+/*list of the blocked threads*/
+static struct list blocked_threads;
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
 
@@ -24,16 +25,8 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 
-/*A sleeping list for all the threads*/
-static struct list threads_sleep_list;
-
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
-static bool compare_threads_wakeup_ticks(
-  const struct list_elem *a,
-  const struct list_elem *b,
-  void *aux
-);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
@@ -43,7 +36,7 @@ static void real_time_delay (int64_t num, int32_t denom);
 void
 timer_init (void) 
 {
-  list_init(&threads_sleep_list);
+  list_init(&blocked_threads);
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
 }
@@ -93,24 +86,45 @@ timer_elapsed (int64_t then)
   return timer_ticks () - then;
 }
 
+/*A function used to compare the wakeup ticks of two threads
+we had to make this function because that is the implentation for the list
+in pintos*/
+bool 
+compare_threads_wakeup_ticks(
+  const struct list_elem *a,
+  const struct list_elem *b,
+  void *aux
+) {
+  const struct thread *thread_a = list_entry(a, struct thread, elem);
+  const struct thread *thread_b = list_entry(b, struct thread, elem);
+  return thread_a->wakeup_tick < thread_b->wakeup_tick;
+}
+
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
 void
 timer_sleep (int64_t ticks) 
-{
-  if (ticks <= 0)
+ {
+    if (ticks <= 0)
       return;
-      
-  struct  thread *t = thread_current();
-  t->wakeup_tick = timer_ticks () + ticks;
+   struct  thread *t =thread_current();
+  
+   t->wakeup_tick=timer_ticks () + ticks;
+    // int64_t start = timer_ticks ();
   ASSERT (intr_get_level () == INTR_ON);
 
-  enum intr_level old_level = intr_disable (); //disable interrupts
-  list_insert_ordered(&threads_sleep_list, &t->elem,
-    compare_threads_wakeup_ticks, NULL);
+  // //busy wait
+  //  while (timer_elapsed (start) < ticks) 
+  //   thread_yield ();
+  
+   enum intr_level old_level = intr_disable (); //disable intterubt
+   //insert the thread in the blocked list and sort the list with the help of minimum function which act as a comparator
+     list_push_back (&blocked_threads,&t->elem);
+     list_insert_ordered(&blocked_threads, &t->elem,
+      compare_threads_wakeup_ticks, NULL);
 
-  thread_block ();
-  intr_set_level (old_level);
+   thread_block ();
+   intr_set_level (old_level); 
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -137,19 +151,6 @@ timer_nsleep (int64_t ns)
   real_time_sleep (ns, 1000 * 1000 * 1000);
 }
 
-/*A function used to compare the wakeup ticks of two threads
-we had to make this function because that is the implentation for the list
-in pintos*/
-bool 
-compare_threads_wakeup_ticks(
-  const struct list_elem *a,
-  const struct list_elem *b,
-  void *aux
-) {
-  const struct thread *thread_a = list_entry(a, struct thread, elem);
-  const struct thread *thread_b = list_entry(b, struct thread, elem);
-  return thread_a->wakeup_tick < thread_b->wakeup_tick;
-}
 /* Busy-waits for approximately MS milliseconds.  Interrupts need
    not be turned on.
 
@@ -197,12 +198,13 @@ timer_print_stats (void)
 }
 
 /* Timer interrupt handler. */
-static void
-timer_interrupt (struct intr_frame *args UNUSED)
-{
+static void timer_interrupt(struct intr_frame *args UNUSED) {
   ticks++;
-  thread_tick ();
+  thread_tick();
 
+
+
+  
   /* MLFQS scheduler updates */
   if (thread_mlfqs)
   {
@@ -226,17 +228,27 @@ timer_interrupt (struct intr_frame *args UNUSED)
 
     // // Check if the current thread still has the highest priority
     // // If not, yield by setting the interrupt flag.
-    // test_max_priority(); 
+    test_max_priority(); 
     intr_set_level(old_level);
   }
 
-  while (!list_empty(&threads_sleep_list)){
-    struct list_elem *front_thread_list_elem = list_front(&threads_sleep_list);
-    struct thread *front_thread = list_entry(front_thread_list_elem, struct thread, elem);
-    if (front_thread->wakeup_tick <= ticks){
-      list_pop_front(&threads_sleep_list);
-      thread_unblock(front_thread);
-    } else {break;}
+
+
+
+  while (!list_empty(&blocked_threads)) {
+    // Get the first thread from the blocked list
+
+    struct thread *t =
+        list_entry(list_front(&blocked_threads), struct thread, elem);
+
+    if (timer_ticks() >= t->wakeup_tick) {
+      // list_less_func If so, remove the thread from the blocked list
+      list_pop_front(&blocked_threads);
+      // Unblock the thread
+      thread_unblock(t);
+    } else {
+      break;
+    }
   }
 }
 
