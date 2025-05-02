@@ -89,7 +89,9 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
-
+    int exit_status;                    /* The exit status of the process */
+    int child_exit_status;              /* The exit status of the child*/
+    struct thread *parent_thread;       /* Pointer the parent thread process*/
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
