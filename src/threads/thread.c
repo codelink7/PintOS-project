@@ -364,7 +364,6 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   list_insert_ordered (&ready_list, &t->elem, (list_less_func*)&thread_priority_greater, NULL);
-  //list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -639,11 +638,7 @@ recalculate_priority_func (struct thread *t, void *aux UNUSED)
 
 /*Returns idle thread*/
 struct thread *get_idle_thread(void) {
-  struct thread *t = thread_current();
-  if (t == idle_thread)
-    return t;
-
-  return;
+  return idle_thread;
 }
 
 /* Helper function to check if current thread should yield to a higher priority thread */

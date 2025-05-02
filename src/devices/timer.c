@@ -199,13 +199,11 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
-  thread_tick();
-  thread_tick();
 
   /* MLFQS scheduler updates */
   if (thread_mlfqs)
   {
-    enum intr_level old_level = intr_disable();
+    enum intr_level old_level = intr_disable(); // Disable Interrupts
     struct thread *t = thread_current ();
 
     /* Increment recent_cpu for the running thread */
@@ -223,9 +221,6 @@ timer_interrupt (struct intr_frame *args UNUSED)
     if (timer_ticks () % 4 == 0)
       thread_foreach (recalculate_priority_func, NULL);
 
-    // // Check if the current thread still has the highest priority
-    // // If not, yield by setting the interrupt flag.
-    test_max_priority(); 
     intr_set_level(old_level);
   }
 
