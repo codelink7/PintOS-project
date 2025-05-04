@@ -199,8 +199,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
-  thread_tick();
-  thread_tick();
+
   while (!list_empty(&threads_sleep_list)){
     struct list_elem *front_thread_list_elem = list_front(&threads_sleep_list);
     struct thread *front_thread = list_entry(front_thread_list_elem, struct thread, elem);
