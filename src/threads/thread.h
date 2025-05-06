@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -93,9 +94,26 @@ struct thread
     int child_exit_status;              /* The exit status of the child*/
     struct thread *parent_thread;       /* Pointer the parent thread process*/
     /* Shared between thread.c and synch.c. */
-    struct list_elem elem;              /* List element. */
-    int last_file_descriptor;          /* The file descriptor for the last opened file */
-    struct list opened_files_list;    /* A list the holds the opened files for a specfic thread */
+    struct list_elem elem;                /* List element. */
+    int last_file_descriptor;             /* The file descriptor for the last opened file */
+    struct list opened_files_list;        /* A list the holds the opened files for a specfic thread */
+    struct file *currently_exec_file;     /* A pointer to the file being currently executed*/
+    struct list children;                 /* A list that contains all the children of the thread*/
+    struct list_elem child_elem;
+   /*
+   A semaphore that is used when the parent is 
+   waiting for the child to exit. It means, when the parent 
+   calls process_wait(), it has to sema_down this semaphore,
+   and when the child exits, it sema_ups this semaphore to 
+   tell the parent it has finished execution.
+   */
+   struct semaphore parent_waits_for_child;
+   /*
+   A semaphore used to synchronize the actions of 
+   the child and the parent during process startup.
+   */
+   struct semaphore semaphore_for_communication;
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
@@ -103,7 +121,7 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
-  };
+};
 
 
 struct opened_file_struct {

@@ -20,6 +20,8 @@
 
 /* Used for setup_stack */
 static void push_stack(int order, void **esp, char *token, char **argv, int argc);
+static void close_all_opened_files(struct thread *);
+static void wake_up_all_children(struct thread *);
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp, char** save_ptr);
@@ -99,16 +101,34 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+	// Here we have to use the parent_waits_for_child semaphore, and do a sema_down beacuse
+	// because we're waiting for a child and it will sema_up the parent in process_exit
 	return -1;
 }
 
 /* Free the current process's resources. */
+
 void
 process_exit (void)
 {
 	struct thread *cur = thread_current ();
 	uint32_t *pd;
-
+	// Closes all the opened files by this thread
+	close_all_opened_files(cur);
+	// Closing the file that is being executed currently by this thread (If there was any)
+	if (cur->currently_exec_file) {
+		file_close(cur->currently_exec_file);
+		// file_allow_write(cur->currently_exec_file);  /* It's not required in this project */
+		cur->currently_exec_file = NULL; 
+	}
+	// Waking up the parent if it was waiting for me
+	if (cur->parent_thread) sema_up(
+		&cur->
+		parent_thread->
+		parent_waits_for_child
+	);
+	// Waking up all the children that are waiting on the parent
+	wake_up_all_children(cur);
 	/* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
 	pd = cur->pagedir;
@@ -127,9 +147,37 @@ process_exit (void)
 	}
 }
 
+/* list_push_back(&thread_current()->opened_files_list, &opened_file->elem); -> This was used to push the elements */
+static void close_all_opened_files(struct thread* t){
+	while (!list_empty(&t->opened_files_list)){
+		struct list_elem *opened_file_list_item = list_pop_front(&t->opened_files_list);
+		struct opened_file_struct *opened_file = list_entry(
+			opened_file_list_item,
+			struct opened_file_struct,
+			elem
+		);
+		file_close(opened_file->ptr);
+		free(opened_file);
+	}
+}
+
+/* This function is used to wake up all the children that are waiting for the parent */
+static void wake_up_all_children(struct thread *cur){
+	while (!list_empty(&cur->children)){
+		struct list_elem *child_item = list_pop_front(&cur->children);
+		struct thread *child_thread = list_entry(
+			child_item,
+			struct thread,
+			child_elem
+		);
+		child_thread->parent_thread = NULL;
+		sema_up(&child_thread->semaphore_for_communication);
+	}
+}
+
 /* Sets up the CPU for running user code in the current
-   thread.
-   This function is called on every context switch. */
+  thread.
+  This function is called on every context switch. */
 void
 process_activate (void)
 {

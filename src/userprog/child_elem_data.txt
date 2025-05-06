@@ -1,0 +1,80 @@
+In Pintos, list_elem and child_elem are used to manage linked list structures. These fields serve different purposes depending on whether they are associated with the parent's list of children or the generic list structure within the thread context. Let's break down both and how they are used:
+
+1. struct list_elem elem;
+This is a generic list element that can be used for any linked list within the thread's data structure.
+
+Purpose: elem is a generic list element used for linking this thread (or any data structure) to any list in Pintos. This can be used for any purpose, not necessarily related to child processes.
+
+Usage: It is typically used to link a thread to any arbitrary list in the kernel. For example, it might be used for:
+
+Ready list of threads.
+
+Sleep list.
+
+Any custom list of elements that the kernel needs to manage.
+
+When it’s used: This field is used when the thread needs to be part of a list, but the list is not specifically related to child processes. For example, a thread might be inserted into the ready list when it is ready to run.
+
+2. struct list children;
+This is a list used to keep track of the children of the current thread (which is a parent in this case). It is a list of struct thread* pointers, and each child thread is added to this list.
+
+Purpose: children holds the list of child threads that the current thread (the parent) has spawned.
+
+Usage: It is used to manage child processes in the kernel. For example, when a parent process creates a new child process, it will add the child to this children list for later management (like waiting for the child to exit, collecting exit status, etc.).
+
+When it’s used: This list is used when managing child processes in the system, such as in functions like process_wait() or process_exit(). When a child is created, it is added to this list for the parent to manage.
+
+3. struct list_elem child_elem;
+This is a list element specific to the parent’s list of children. It is used to add the current thread (child) to the parent's children list.
+
+Purpose: child_elem is used to link the current thread (child) to its parent's list of children. It is specifically used for maintaining the relationship between the parent and its children.
+
+Usage: It allows the parent thread to manage the list of its children. When a new child process is created, it will add itself to the parent's children list using child_elem.
+
+When it’s used: This field is used when a thread is inserted into its parent's children list. The list element is part of the child thread (not the parent), and it links the child to its parent's list.
+
+When Are elem and child_elem Different?
+The difference lies in what list they belong to:
+
+elem: This is a generic list element that can be used in any list within the kernel, including, but not limited to, the ready list, sleep list, or other custom lists that don't involve parent-child relationships.
+
+Example use: When a thread is added to the ready list so it can be scheduled by the kernel.
+
+child_elem: This is a list element specifically for the parent’s children list. It is used to link the child thread to the parent thread's list of children.
+
+Example use: When a child thread is created, it gets added to the parent's children list using child_elem.
+
+Example Scenario
+Consider the following scenario:
+
+Parent creates a child:
+
+The parent thread has a children list.
+
+The child thread has a child_elem field that gets inserted into the parent’s children list.
+
+The elem field in the child thread could be used elsewhere (for example, in a generic list for scheduling or another purpose).
+
+The child thread waits for the parent to exit:
+
+The child may use its elem field to link into other lists, such as a waiting list or sleep list, where the parent might also have a list element.
+
+The child’s child_elem stays in the parent’s children list because it represents the specific parent-child relationship.
+
+Conclusion
+elem is a generic list element used to link the thread to any list in the system (ready, sleep, etc.).
+
+child_elem is a specific list element used to link the thread to the parent’s children list.
+
+They are different in terms of which list they are part of: elem is used for any list, while child_elem is used exclusively for the parent-child relationship.
+
+You can't reuse the same list_elem (elem) for multiple lists simultaneously. If you did that:
+
+Inserting elem into the ready list would overwrite its previous next/prev pointers.
+
+Removing it from one list would corrupt the other.
+
+That’s why each list needs its own dedicated list_elem field.
+
+If your kernel structure has a thread participating in 3+ lists simultaneously 
+(e.g., ready, sleeping, waiting on locks), you’ll often need more list_elems — one per role.

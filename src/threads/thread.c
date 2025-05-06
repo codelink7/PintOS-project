@@ -472,6 +472,14 @@ init_thread (struct thread *t, const char *name, int priority)
 	t->priority = priority;
 	t->magic = THREAD_MAGIC;
 
+	// Init the lists for opened files and for the children
+	list_init(&t->opened_files_list);
+  list_init(&t->children);
+
+	// Init the semaphores that are used for sync between the parent and the child
+  sema_init(&t->semaphore_for_communication, 0);
+  sema_init(&t->parent_waits_for_child, 0);
+
 	old_level = intr_disable ();
 	list_push_back (&all_list, &t->allelem);
 	intr_set_level (old_level);
