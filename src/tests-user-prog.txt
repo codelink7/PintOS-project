@@ -1,0 +1,45 @@
+# Basic tests
+halt
+exit
+exit-2
+multi-exit
+
+# Exec & wait
+exec-once
+exec-arg
+exec-multiple
+wait-simple
+wait-twice
+wait-killed
+
+# Read tests
+read-normal
+read-zero
+read-bad-ptr
+read-boundary
+read-stdout
+
+# Write tests
+write-normal
+write-zero
+write-bad-ptr
+write-boundary
+write-stdin
+
+# Argument and pointer validation
+args-none
+args-single
+args-multiple
+args-many
+bad-read
+bad-write
+bad-fd
+null
+stack-overflow
+sc-boundary
+sc-bad-addr
+
+
+# To run all the tests
+cd pintos/src/userprog
+make clean && make && pintos-mkdisk filesys.dsk --filesys-size=2 && pintos -p ../.. -a tests -- -q && make check
