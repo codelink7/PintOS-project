@@ -43,3 +43,5 @@ sc-bad-addr
 # To run all the tests
 cd pintos/src/userprog
 make clean && make && pintos-mkdisk filesys.dsk --filesys-size=2 && pintos -p ../.. -a tests -- -q && make check
+
+pintos -v -k -T 60 --qemu  --filesys-size=2 -p tests/userprog/create-null -a create-null -- -q t
