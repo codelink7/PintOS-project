@@ -94,6 +94,8 @@ struct thread
     struct thread *parent_thread;       /* Pointer the parent thread process*/
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+    int last_file_descriptor;          /* The file descriptor for the last opened file */
+    struct list opened_files_list;    /* A list the holds the opened files for a specfic thread */
 
 
     /*For userprog*/
@@ -107,6 +109,13 @@ struct thread
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
+
+
+struct opened_file_struct {
+   int fd;                      // File descriptor assigned to the file
+   struct file *ptr;            // Pointer to the opened file (from filesys_open)
+   struct list_elem elem;       // List element to link into thread's opened_files list
+};
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

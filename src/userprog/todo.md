@@ -21,7 +21,7 @@
 
 - [ ] **SysCall: Exit**
 - [ ] SysCall: Open
-- [ ] SysCall: Seek
+- [ ] SysCall: Read
 
 ---
 
