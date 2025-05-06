@@ -96,11 +96,6 @@ struct thread
     struct list_elem elem;              /* List element. */
     int last_file_descriptor;          /* The file descriptor for the last opened file */
     struct list opened_files_list;    /* A list the holds the opened files for a specfic thread */
-
-
-    /*For userprog*/
-    uint32_t *pagedir;                  /* Page Directory*/
-
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */

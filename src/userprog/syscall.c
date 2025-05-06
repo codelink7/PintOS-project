@@ -1,12 +1,28 @@
 #include "userprog/syscall.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <syscall-nr.h>
 #include "threads/interrupt.h"
-#include "threads/thread.h"
+#include "threads/synch.h"
+#include "threads/vaddr.h"
 #include "devices/shutdown.h"
 #include "lib/stdio.h"
-static void syscall_handler (struct intr_frame *);
 
+
+static void syscall_handler (struct intr_frame *);
+void syscall_halt(void);
+void syscall_exit(int status);
+tid_t syscall_exec(struct intr_frame *);
+int syscall_wait(struct intr_frame *);
+bool syscall_create(struct intr_frame *);
+bool syscall_remove(struct intr_frame *);
+void syscall_open(struct intr_frame *);
+int syscall_filesize(struct intr_frame *);
+int syscall_read(struct intr_frame *);
+int syscall_write(struct intr_frame *);
+void syscall_seek(struct intr_frame *);
+unsigned syscall_tell(struct intr_frame *);
+void syscall_close(struct intr_frame *);
 
 /*
   We only use one lock because we're protecting the 
@@ -61,7 +77,7 @@ syscall_handler (struct intr_frame *f)
         syscall_exec(f);
         break;
       case SYS_WAIT:
-        sys_wait(f);
+        syscall_wait(f);
         break;
       case SYS_CREATE:
         f->eax = syscall_create(f);
@@ -337,3 +353,13 @@ struct opened_file_struct *get_open_file_by_fd(int fd) {
   }
   return NULL;
 }
+
+int syscall_wait(struct intr_frame *f){
+  return 1;
+}
+
+tid_t syscall_exec(struct intr_frame *f){
+  return 1;
+}
+
+// sudo docker run --platform linux/amd64 --rm -it -v "$(pwd)/PintOS-project:/root/pintos" /* */
