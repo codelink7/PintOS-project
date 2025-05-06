@@ -113,22 +113,28 @@ process_exit (void)
 {
 	struct thread *cur = thread_current ();
 	uint32_t *pd;
+
 	// Closes all the opened files by this thread
 	close_all_opened_files(cur);
+
 	// Closing the file that is being executed currently by this thread (If there was any)
 	if (cur->currently_exec_file) {
 		file_close(cur->currently_exec_file);
-		// file_allow_write(cur->currently_exec_file);  /* It's not required in this project */
+		// file_allow_write(cur->currently_exec_file);  /* It's not required in this phase */
 		cur->currently_exec_file = NULL; 
 	}
+
 	// Waking up the parent if it was waiting for me
-	if (cur->parent_thread) sema_up(
+	if (cur->parent_thread != NULL) sema_up(
 		&cur->
 		parent_thread->
 		parent_waits_for_child
 	);
+
+
 	// Waking up all the children that are waiting on the parent
 	wake_up_all_children(cur);
+
 	/* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
 	pd = cur->pagedir;
@@ -147,9 +153,13 @@ process_exit (void)
 	}
 }
 
-/* list_push_back(&thread_current()->opened_files_list, &opened_file->elem); -> This was used to push the elements */
+/* A function to close all the files that was opened during the execution of this thread*/
 static void close_all_opened_files(struct thread* t){
 	while (!list_empty(&t->opened_files_list)){
+		/* 
+		list_push_back(&thread_current()->opened_files_list, &opened_file->elem); -> 
+		This was used to push the elements 
+		*/
 		struct list_elem *opened_file_list_item = list_pop_front(&t->opened_files_list);
 		struct opened_file_struct *opened_file = list_entry(
 			opened_file_list_item,

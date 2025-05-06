@@ -6,6 +6,7 @@
     "syscall-nr.h": "c",
     "thread.h": "c",
     "stdint.h": "c",
-    "syscall.h": "c"
+    "syscall.h": "c",
+    "type_traits": "c"
   }
 }
