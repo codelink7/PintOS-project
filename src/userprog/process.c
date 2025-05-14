@@ -181,7 +181,7 @@ static void wake_up_all_children(struct thread *cur){
 			child_elem
 		);
 		child_thread->parent_thread = NULL;
-		sema_up(&child_thread->semaphore_for_communication);
+		sema_up(&child_thread->ipc_semaphore);
 	}
 }
 

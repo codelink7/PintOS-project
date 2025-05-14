@@ -91,7 +91,7 @@ struct thread
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
     int exit_status;                    /* The exit status of the process */
-    int child_exit_status;              /* The exit status of the child*/
+    int child_status;                   /* The status of the child*/
     struct thread *parent_thread;       /* Pointer the parent thread process*/
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;                /* List element. */
@@ -99,7 +99,7 @@ struct thread
     struct list opened_files_list;        /* A list the holds the opened files for a specfic thread */
     struct file *currently_exec_file;     /* A pointer to the file being currently executed*/
     struct list children;                 /* A list that contains all the children of the thread*/
-    struct list_elem child_elem;
+    struct list_elem child_elem;          /* A list element that will be used to store the child in the children list*/
    /*
    A semaphore that is used when the parent is 
    waiting for the child to exit. It means, when the parent 
@@ -112,7 +112,7 @@ struct thread
    A semaphore used to synchronize the actions of 
    the child and the parent during process startup.
    */
-   struct semaphore semaphore_for_communication;
+   struct semaphore ipc_semaphore;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */

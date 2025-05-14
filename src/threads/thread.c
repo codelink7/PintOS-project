@@ -184,6 +184,8 @@ thread_create (const char *name, int priority,
 	init_thread (t, name, priority);
 	tid = t->tid = allocate_tid ();
 
+	t->parent_thread = thread_current();
+
 	/* Prepare thread for first run by initializing its stack.
      Do this atomically so intermediate values for the 'stack' 
      member cannot be observed. */
@@ -477,8 +479,26 @@ init_thread (struct thread *t, const char *name, int priority)
   list_init(&t->children);
 
 	// Init the semaphores that are used for sync between the parent and the child
-  sema_init(&t->semaphore_for_communication, 0);
+  sema_init(&t->ipc_semaphore, 0);
   sema_init(&t->parent_waits_for_child, 0);
+
+	// 	| File Descriptor | Purpose                    |
+	// | --------------- | -------------------------- |
+	// | `0`             | `stdin` (standard input)   |
+	// | `1`             | `stdout` (standard output) |
+	// | `2`             | `stderr` (standard error)  |
+	// So we start the last_file_descriptor at 2 
+	// opened_file->fd = ++thread_current()->last_file_descriptor;
+
+
+	// 	child_status	Meaning
+	// 	-2	Child is alive, hasn't exited yet
+	//	-1	Child failed to load or exited with error
+	//	>= 0	Child exited normally with given status
+
+	t->parent_thread = running_thread();
+	t->last_file_descriptor = 2; 
+	t->child_status = -2;
 
 	old_level = intr_disable ();
 	list_push_back (&all_list, &t->allelem);
