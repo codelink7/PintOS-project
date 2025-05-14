@@ -17,37 +17,21 @@ int syscall_wait(struct intr_frame *);
 bool syscall_create(struct intr_frame *);
 bool syscall_remove(struct intr_frame *);
 void syscall_open(struct intr_frame *);
-int syscall_filesize(struct intr_frame *);
+uint32_t syscall_filesize(struct intr_frame *);
 int syscall_read(struct intr_frame *);
 int syscall_write(struct intr_frame *);
 void syscall_seek(struct intr_frame *);
 unsigned syscall_tell(struct intr_frame *);
 void syscall_close(struct intr_frame *);
 
-/*
-  We only use one lock because we're protecting the 
-  structure that is shared between the files not the content of the files itself
-
-  Some Additional information about the locking
-  Here's the key idea:
-  Even if different threads access different files, 
-  they all use the same shared file system structures like inode tables, 
-  file descriptor tables, or directory trees. These structures must be protected.
-  So even if you're opening fileA.txt and someone else is writing to fileB.txt, they both:
-  Might allocate an inode,
-  Might read or update metadata (like open counts, file positions),
-  Might trigger disk I/O.
-  This is why a global lock is used to protect the critical section across all file operations.
-*/
 
 static struct lock locker_for_all_files; 
-
 
 void
 syscall_init (void) 
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
-  
+
   // Initing the lock
   lock_init(&locker_for_all_files);
 }
@@ -56,7 +40,7 @@ syscall_init (void)
   This is how we can get the arguments for every syscall we make
 
     f->esp points to the syscall number
-
+    
     f->esp + 4 points to the first argument
 
     f->esp + 8 → second argument
@@ -80,7 +64,6 @@ syscall_handler (struct intr_frame *f)
 {
   if (!is_valid_user_pointer(f->esp)) syscall_exit(-1);
   int sys_call_num = *(int *)f->esp;
-  printf("System call number is: %d\n", sys_call_num);
   switch(sys_call_num){
     case SYS_HALT:
         syscall_halt();
@@ -90,6 +73,7 @@ syscall_handler (struct intr_frame *f)
         syscall_exit(*(int *)(f->esp + 4));
         break;
       case SYS_EXEC:
+        //ensure memory address of the pointer is valid
         f->eax = syscall_exec(f);
         break;
       case SYS_WAIT:
@@ -159,26 +143,31 @@ syscall_exit(int status){
   struct thread *parent = cur->parent_thread;
   cur->exit_status = status;
   printf("%s: exit(%d)\n", cur->name, status);
-  if (parent != NULL) parent->child_status = status;
+  if (parent != NULL) parent->child_exit_status = status;
   thread_exit();
 }
 
 void
 syscall_open(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
-  char *filename = *(char **)(f->esp + 4);
-  if (filename == NULL) syscall_exit(-1);
-  struct opened_file_struct *opened_file = (struct opened_file_struct*) malloc(
-    sizeof(struct opened_file_struct)
-  );
-  if (opened_file == NULL){
+  char* name = (char*)(*((int*)f->esp + 1));
+  if (name == NULL || !is_valid_user_pointer(name)) syscall_exit(-1);
+
+  struct opened_file_struct *opened_file = palloc_get_page(0);
+  if (opened_file == NULL) 
+  {
     free(opened_file);
-    f->eax = -1; // The file wasn't opened and we returned -1 which is not a valid descriptor
-    return; 
+    f->eax = -1;
+    return;
   }
   lock_acquire(&locker_for_all_files);
-  opened_file->ptr = filesys_open(filename);
+  opened_file->ptr = filesys_open(name);
   lock_release(&locker_for_all_files);
+  if (opened_file->ptr == NULL)
+  {
+    f->eax = -1;
+    return;
+  }
   opened_file->fd = ++thread_current()->last_file_descriptor;
   list_push_back(&thread_current()->opened_files_list, &opened_file->elem);
   f->eax = opened_file->fd;
@@ -188,7 +177,7 @@ bool
 syscall_remove(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   char *filename = *(char **)(f->esp + 4);
-  if (filename == NULL || is_valid_user_pointer(filename)) syscall_exit(-1);
+  if (filename == NULL || !is_valid_user_pointer(filename)) syscall_exit(-1);
   bool removing_result;
   lock_acquire(&locker_for_all_files);
   // bool filesys_remove (const char *name) 
@@ -197,7 +186,7 @@ syscall_remove(struct intr_frame *f){
   return removing_result;
 }
 
-int 
+uint32_t
 syscall_filesize(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   int file_descriptor = *(int *)(f->esp + 4);
@@ -206,44 +195,30 @@ syscall_filesize(struct intr_frame *f){
   if (opened_file == NULL) return -1;
   lock_acquire(&locker_for_all_files);
   // off_t file_length (struct file *file) 
-  file_length_uint32_t = (uint32_t)file_length(opened_file);
+  file_length_uint32_t = (uint32_t) file_length(opened_file->ptr);
   lock_release(&locker_for_all_files);
   return file_length_uint32_t;
 }
 
 
-/*
-  Additional Information about the char * pointer:
-    So, f->esp + 4 contains the value of the filename pointer — 
-    but that pointer itself points to a string in user memory.
-    Step-by-Step Dissection
-    (char **)(f->esp + 4)
-    f->esp + 4:
-    This moves 4 bytes up the stack to where the first argument is stored (the filename pointer).
-    (char **):
-    You cast it to char **, meaning:
-    "Interpret this address as a pointer to a char *"
-    Because the user put a char * on the stack.
-    *(char **):
-    Now you dereference it — you go to that memory location, and grab the char * value stored there.
-    In other words: you're pulling out the actual address of the filename string.
-*/
 
 bool 
 syscall_create(struct intr_frame *f){
+  // Validation
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   if (!is_valid_user_pointer(f->esp + 8)) syscall_exit(-1);
   char *filename = *(char **)(f->esp + 4);
   size_t inital_file_length = *(unsigned *)(f->esp + 8);
   bool creating_result;
   if (filename == NULL || !is_valid_user_pointer(filename))
-    return false;
+    syscall_exit(-1);
   lock_acquire(&locker_for_all_files);
   // bool create (const char *file, unsigned initial_size) -> The function in filesys.c
-  creating_result = (bool)filesys_create(filename, inital_file_length);
+  creating_result = (bool) filesys_create(filename, inital_file_length);
   lock_release(&locker_for_all_files);
   return creating_result;
 }
+
 
 void 
 syscall_close(struct intr_frame *f){
@@ -251,13 +226,14 @@ syscall_close(struct intr_frame *f){
   int file_descriptor = *(int *)(f->esp + 4);
   struct opened_file_struct *file_to_be_closed = get_open_file_by_fd(file_descriptor);
   if (file_to_be_closed == NULL) return;
+    // file_close (struct file *file) 
   lock_acquire(&locker_for_all_files);
-  // file_close (struct file *file) 
   file_close (file_to_be_closed->ptr);
   lock_release(&locker_for_all_files);
   list_remove(&file_to_be_closed->elem);
   palloc_free_page(file_to_be_closed);
 }
+
 
 unsigned 
 syscall_tell(struct intr_frame *f){
@@ -286,20 +262,6 @@ syscall_seek(struct intr_frame *f){
   file_seek(file_to_be_seeked->ptr, position_to_be_seeked);
   lock_release(&locker_for_all_files);
 }
-/*
-  Information about the buffer:
-    void *buffer = *(void **)(f->esp + 8);  // 3rd argument
-    That means:
-    The user passed a char * as the buffer
-    That pointer is stored on the stack at f->esp + 8
-    You retrieve it using a double pointer (void **), then dereference to get the real buffer address
-    🔹 ((char *)buffer)[i]
-    This accesses the i-th byte of the buffer.
-    Think of buffer as an array of bytes: you're writing into the i-th position.
-    So:
-    ((char *)buffer)[0] = first character from input
-    ((char *)buffer)[1] = second character from input
-*/
 
 int 
 syscall_read(struct intr_frame *f){
@@ -310,9 +272,10 @@ syscall_read(struct intr_frame *f){
   void *buffer = *(void **)(f->esp + 8);
   uint32_t size_to_be_read = *(int *)(f->esp + 12);
   if (buffer == NULL || !is_valid_user_pointer(buffer))
-    return -1;
+    syscall_exit(-1);
   if (file_descriptor == STDIN_FILENO){
     for (uint32_t i = 0; i < size_to_be_read; i++){
+      if (!is_valid_user_pointer(buffer + i)) syscall_exit(-1);
       lock_acquire(&locker_for_all_files);
       // uint8_t input_getc (void) 
       ((char*)buffer)[i] = input_getc();
@@ -331,8 +294,7 @@ syscall_read(struct intr_frame *f){
   }
 }
 
-
-int 
+int
 syscall_write(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   if (!is_valid_user_pointer(f->esp + 8)) syscall_exit(-1);
@@ -341,7 +303,7 @@ syscall_write(struct intr_frame *f){
   void *buffer = *(void **)(f->esp + 8);
   uint32_t size_to_be_written = *(int *)(f->esp + 12);
   if (buffer == NULL || !is_valid_user_pointer(buffer))
-    return -1;
+    syscall_exit(-1);
   if (file_descriptor == STDOUT_FILENO){
     lock_acquire(&locker_for_all_files);
     // void putbuf (const char *buffer, size_t n) 
@@ -365,13 +327,13 @@ syscall_write(struct intr_frame *f){
   its file desciptor and the current thread running
 */
 
-struct opened_file_struct *get_open_file_by_fd(int fd) {
+struct opened_file_struct* get_open_file_by_fd(int fd) {
   struct list_elem *e;
-  struct thread *t = thread_current();
-  for (e = list_begin(&t->opened_files_list); e != list_end(&t->opened_files_list); e = list_next(e)) {
-      struct opened_file_struct *of = list_entry(e, struct opened_file_struct, elem);
-      if (of->fd == fd)
-          return of;
+  struct thread *cur = thread_current();
+  for (e = list_begin(&cur->opened_files_list); e != list_end(&cur->opened_files_list); e = list_next(e)) {
+    struct opened_file_struct *ofs = list_entry(e, struct opened_file_struct, elem);
+    if (ofs->fd == fd)
+      return ofs;
   }
   return NULL;
 }
@@ -382,16 +344,17 @@ int syscall_wait(struct intr_frame *f){
   return process_wait(thread_id);
 }
 
-tid_t syscall_exec(struct intr_frame *f){
-    if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
-    tid_t process_tid;
-    int arg_value = *(int *)(f->esp + 4);
-    char* the_arg = (char *)arg_value;
-    if (the_arg == NULL) syscall_exit(-1);
-    lock_acquire(&locker_for_all_files);
-    process_tid = process_execute(the_arg);
-    lock_release(&locker_for_all_files);
-    return process_tid;
+tid_t syscall_exec(struct intr_frame *){
+  tid_t process_id;
+  if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
+  int* arg_ptr = (int*)f->esp + 1;
+  int arg_value = *arg_ptr;
+  char* the_arg = (char*)arg_value;
+  if (the_arg == NULL || !is_valid_user_pointer(the_arg)) syscall_exit(-1);
+  lock_acquire(&locker_for_all_files);
+  process_id = process_execute(the_arg);
+  lock_release(&locker_for_all_files);
+  return process_id;
 }
 
 // Docker Command
@@ -400,17 +363,8 @@ tid_t syscall_exec(struct intr_frame *f){
 // Commands to run the code
 // pintos-mkdisk filesys.dsk --filesys-size=2
 // pintos -f -q -> This is for formating
-// pintos -p ./examples/halt -a halt -- -q -> Copying the file to the pintos
-// pintos run 'halt' -> Running the file without -q flag
 
-// pintos -p ./examples/echo -a echo -- -q -> Copying the program
-// pintos run 'echo 1' -> Running the program with one argument
-
-// pintos -p ./examples/cat -a cat -- -q -> Copying the cat program
-// pintos -p ./file -a file -- -q -> Copying a useless file that will be used in the testing
-// pintos run 'cat file' -> Running the program
-
-// pintos -p ./examples/ls -a ls -- -q
-// pintos run 'ls'
-
-// Remove the -q to run the thing without quiting
+// pintos -v -p ./args-none -a args-none -- -q run args-none
+// pintos -v -p ./args-many -a args-many -- -q run args-many
+// pintos -v -p ./args-multiple-a args-multiple -- -q run args-multiple
+// pintos -v -p ./sc-boundary-3 -a sc-boundary-3  -- -q run sc-boundary-3
