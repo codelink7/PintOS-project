@@ -217,7 +217,7 @@ static void close_all_opened_files(struct thread* t){
 			elem
 		);
 		file_close(opened_file->ptr);
-		free(opened_file);
+		palloc_free_page(opened_file);
 	}
 }
 
