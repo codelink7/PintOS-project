@@ -17,7 +17,7 @@ int syscall_wait(struct intr_frame *);
 bool syscall_create(struct intr_frame *);
 bool syscall_remove(struct intr_frame *);
 void syscall_open(struct intr_frame *);
-int syscall_filesize(struct intr_frame *);
+uint32_t syscall_filesize(struct intr_frame *);
 int syscall_read(struct intr_frame *);
 int syscall_write(struct intr_frame *);
 void syscall_seek(struct intr_frame *);
@@ -26,7 +26,7 @@ void syscall_close(struct intr_frame *);
 
 /*
   We only use one lock because we're protecting the 
-  structure that is shared between the files not the content of the files itself
+  structure that is shared between the files not the content of the file itself
 
   Some Additional information about the locking
   Here's the key idea:
@@ -47,7 +47,7 @@ void
 syscall_init (void) 
 {
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
-  
+
   // Initing the lock
   lock_init(&locker_for_all_files);
 }
@@ -56,7 +56,7 @@ syscall_init (void)
   This is how we can get the arguments for every syscall we make
 
     f->esp points to the syscall number
-
+    
     f->esp + 4 points to the first argument
 
     f->esp + 8 → second argument
@@ -80,7 +80,7 @@ syscall_handler (struct intr_frame *f)
 {
   if (!is_valid_user_pointer(f->esp)) syscall_exit(-1);
   int sys_call_num = *(int *)f->esp;
-  printf("System call number is: %d\n", sys_call_num);
+  // printf("System call number is: %d\n", sys_call_num);
   switch(sys_call_num){
     case SYS_HALT:
         syscall_halt();
@@ -90,7 +90,17 @@ syscall_handler (struct intr_frame *f)
         syscall_exit(*(int *)(f->esp + 4));
         break;
       case SYS_EXEC:
-        f->eax = syscall_exec(f);
+      //ensure memory address of the pointer is valid
+    if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
+    //retrieve the second argument of the system call and cast it 
+    int* arg_ptr = (int*)f->esp + 1;
+    int arg_value = *arg_ptr;
+    char* the_arg = (char*)arg_value;
+    if (the_arg == NULL) syscall_exit(-1);
+    lock_acquire(&locker_for_all_files);
+    //execute program and return 
+    f->eax = process_execute(the_arg);
+    lock_release(&locker_for_all_files);
         break;
       case SYS_WAIT:
         f->eax = syscall_wait(f);
@@ -166,32 +176,35 @@ syscall_exit(int status){
 void
 syscall_open(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
-  char *filename = *(char **)(f->esp + 4);
-  printf("File name: %s\n", filename);
-  if (filename == NULL) syscall_exit(-1);
-  struct opened_file_struct *opened_file = (struct opened_file_struct*) malloc(
-    sizeof(struct opened_file_struct)
-  );
-  if (opened_file == NULL){
-    printf("Failed to create the object");
-    return -1; // The file wasn't opened and we returned -1 which is not a valid descriptor
-  } 
-  printf("Got here\n");
+  char* name = (char*)(*((int*)f->esp + 1));
+  if (name == NULL) syscall_exit(-1);
+
+  struct opened_file_struct* open = palloc_get_page(0);
+
+  if (open == NULL) 
+  {
+    palloc_free_page(open);
+    f->eax = -1;
+    return;
+  }
   lock_acquire(&locker_for_all_files);
-  printf("Got here 2\n");
-  opened_file->ptr = filesys_open(filename);
+  open->ptr = filesys_open(name);
   lock_release(&locker_for_all_files);
-  printf("Got here 3\n");
-  opened_file->fd = ++thread_current()->last_file_descriptor;
-  list_push_back(&thread_current()->opened_files_list, &opened_file->elem);
-  f->eax = opened_file->fd;
+  if (open->ptr == NULL)
+  {
+    f->eax = -1;
+    return;
+  }
+  open->fd = ++thread_current()->last_file_descriptor;
+  list_push_back(&thread_current()->opened_files_list, &open->elem);
+  return open->fd;
 }
 
 bool 
 syscall_remove(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   char *filename = *(char **)(f->esp + 4);
-  printf("File name: %s\n", filename);
+  // printf("File name: %s\n", filename);
   if (filename == NULL || is_valid_user_pointer(filename)) syscall_exit(-1);
   bool removing_result;
   lock_acquire(&locker_for_all_files);
@@ -201,21 +214,20 @@ syscall_remove(struct intr_frame *f){
   return removing_result;
 }
 
-int 
+uint32_t
 syscall_filesize(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   int file_descriptor = *(int *)(f->esp + 4);
-  printf("File descriptor is: %d\n", file_descriptor);
+  // printf("File descriptor is: %d\n", file_descriptor);
   uint32_t file_length_uint32_t;
   struct opened_file_struct *opened_file = get_open_file_by_fd(file_descriptor);
   if (opened_file == NULL) return -1;
   lock_acquire(&locker_for_all_files);
   // off_t file_length (struct file *file) 
-  file_length_uint32_t = (uint32_t)file_length(opened_file);
+  file_length_uint32_t = (uint32_t) file_length(opened_file->ptr);
   lock_release(&locker_for_all_files);
   return file_length_uint32_t;
 }
-
 
 /*
   Additional Information about the char * pointer:
@@ -236,27 +248,29 @@ syscall_filesize(struct intr_frame *f){
 
 bool 
 syscall_create(struct intr_frame *f){
+  // Validation
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   if (!is_valid_user_pointer(f->esp + 8)) syscall_exit(-1);
   char *filename = *(char **)(f->esp + 4);
-  printf("Filename is %s\n", filename);
+  // printf("Filename is %s\n", filename);
   size_t inital_file_length = *(unsigned *)(f->esp + 8);
-  printf("Inital file size is %d\n", inital_file_length);
+  // printf("Inital file size is %d\n", inital_file_length);
   bool creating_result;
   if (filename == NULL || !is_valid_user_pointer(filename))
     return false;
   lock_acquire(&locker_for_all_files);
   // bool create (const char *file, unsigned initial_size) -> The function in filesys.c
-  creating_result = (bool)filesys_create(filename, inital_file_length);
+  creating_result = (bool) filesys_create(filename, inital_file_length);
   lock_release(&locker_for_all_files);
   return creating_result;
 }
+
 
 void 
 syscall_close(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   int file_descriptor = *(int *)(f->esp + 4);
-  printf("File descriptor is: %d\n", file_descriptor);
+  // printf("File descriptor is: %d\n", file_descriptor);
   struct opened_file_struct *file_to_be_closed = get_open_file_by_fd(file_descriptor);
   if (file_to_be_closed == NULL) return;
   lock_acquire(&locker_for_all_files);
@@ -264,14 +278,15 @@ syscall_close(struct intr_frame *f){
   file_close (file_to_be_closed->ptr);
   lock_release(&locker_for_all_files);
   list_remove(&file_to_be_closed->elem);
-  palloc_free_page(file_to_be_closed);
+  free(file_to_be_closed);
 }
+
 
 unsigned 
 syscall_tell(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   int file_descriptor = *(int *)(f->esp + 4);
-  printf("File descriptor is: %d\n", file_descriptor);
+  // printf("File descriptor is: %d\n", file_descriptor);
   uint32_t telling_file_result;
   struct opened_file_struct *file_to_be_telled = get_open_file_by_fd(file_descriptor);
   if (file_to_be_telled == NULL) return (unsigned) -1;
@@ -287,9 +302,9 @@ syscall_seek(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   if (!is_valid_user_pointer(f->esp + 8)) syscall_exit(-1);
   int file_descriptor = *(int *)(f->esp + 4);
-  printf("File descriptor is: %d\n", file_descriptor);
+  // printf("File descriptor is: %d\n", file_descriptor);
   uint32_t position_to_be_seeked = *(int *)(f->esp + 8);
-  printf("Position to be seeked: %d\n", position_to_be_seeked);
+  // printf("Position to be seeked: %d\n", position_to_be_seeked);
   struct opened_file_struct *file_to_be_seeked = get_open_file_by_fd(file_descriptor);
   if (file_to_be_seeked == NULL) return;
   lock_acquire(&locker_for_all_files);
@@ -297,6 +312,7 @@ syscall_seek(struct intr_frame *f){
   file_seek(file_to_be_seeked->ptr, position_to_be_seeked);
   lock_release(&locker_for_all_files);
 }
+
 /*
   Information about the buffer:
     void *buffer = *(void **)(f->esp + 8);  // 3rd argument
@@ -318,53 +334,52 @@ syscall_read(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 8)) syscall_exit(-1);
   if (!is_valid_user_pointer(f->esp + 12)) syscall_exit(-1);
   int file_descriptor = *(int *)(f->esp + 4);
-  printf("File descriptor is: %d\n", file_descriptor);
+  // printf("File descriptor is: %d\n", file_descriptor);
   void *buffer = *(void **)(f->esp + 8);
-  printf("Got buffer\n");
+  // printf("Got buffer\n");
   uint32_t size_to_be_read = *(int *)(f->esp + 12);
-  printf("Size to be read: %d\n", size_to_be_read);
+  // printf("Size to be read: %d\n", size_to_be_read);
   if (buffer == NULL || !is_valid_user_pointer(buffer))
     return -1;
   if (file_descriptor == STDIN_FILENO){
     for (uint32_t i = 0; i < size_to_be_read; i++){
-      printf("Got here\n");
+      // printf("Got here\n");
       lock_acquire(&locker_for_all_files);
-      printf("Got here 2\n");
+      // printf("Got here 2\n");
       // uint8_t input_getc (void) 
       ((char*)buffer)[i] = input_getc();
       lock_release(&locker_for_all_files);
-      printf("Got here 3\n");
+      // printf("Got here 3\n");
     }
     return size_to_be_read;
   } else {
     struct opened_file_struct *file_to_be_read = get_open_file_by_fd(file_descriptor);
-    if (file_to_be_read == NULL) -1;
+    if (file_to_be_read == NULL) return -1;
     int read_result;
     lock_acquire(&locker_for_all_files);
-    printf("Got here 4\n");
+    // printf("Got here 4\n");
     // off_t file_read (struct file *file, void *buffer, off_t size) 
     read_result = file_read(file_to_be_read->ptr, buffer, size_to_be_read);
     lock_release(&locker_for_all_files);
-    printf("Got here 5\n");
+    // printf("Got here 5\n");
     return read_result;
   }
 }
 
-
-int 
+int
 syscall_write(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   if (!is_valid_user_pointer(f->esp + 8)) syscall_exit(-1);
   if (!is_valid_user_pointer(f->esp + 12)) syscall_exit(-1);
   int file_descriptor = *(int *)(f->esp + 4);
-  printf("File descriptor is: %d\n", file_descriptor);
+  // printf("File descriptor is: %d\n", file_descriptor);
   void *buffer = *(void **)(f->esp + 8);
   uint32_t size_to_be_written = *(int *)(f->esp + 12);
-  printf("Size to be written: %d\n", size_to_be_written);
+  // printf("Size to be written: %d\n", size_to_be_written);
   if (buffer == NULL || !is_valid_user_pointer(buffer))
     return -1;
   if (file_descriptor == STDOUT_FILENO){
-    printf("Got here or not\n");
+    // printf("Got here or not\n");
     lock_acquire(&locker_for_all_files);
     // void putbuf (const char *buffer, size_t n) 
     putbuf(buffer, size_to_be_written);
@@ -372,7 +387,7 @@ syscall_write(struct intr_frame *f){
     return size_to_be_written;
   } else {
     struct opened_file_struct *file_to_be_written_to = get_open_file_by_fd(file_descriptor);
-    if (file_to_be_written_to == NULL) -1;
+    if (file_to_be_written_to == NULL) return -1;
     int write_result;
     lock_acquire(&locker_for_all_files);
     // off_t file_write (struct file *file, const void *buffer, off_t size) 
@@ -404,12 +419,9 @@ int syscall_wait(struct intr_frame *f){
   return process_wait(thread_id);
 }
 
-tid_t syscall_exec(struct intr_frame *f){
-  return 1;
-}
 
 // Docker Command
-// sudo docker run --platform linux/amd64 --rm -it -v "$(pwd)/PintOS-project:/root/pintos" /**/
+// sudo docker run --platform linux/amd64 --rm -it -v "$(pwd)/PintOS-project:/root/pintos" a85bf0a348d6a4bdca899d54f162da5b76f60aaf6107808c745c3cefbaa6f644
 
 // Commands to run the code
 // pintos-mkdisk filesys.dsk --filesys-size=2
@@ -423,8 +435,21 @@ tid_t syscall_exec(struct intr_frame *f){
 // pintos -p ./examples/cat -a cat -- -q -> Copying the cat program
 // pintos -p ./file -a file -- -q -> Copying a useless file that will be used in the testing
 // pintos run 'cat file' -> Running the program
-
+// pintos -p ./examples/cp -a cp -- -q
+// pintos run 'cp file file2'
 // pintos -p ./examples/ls -a ls -- -q
-// pintos run 'ls'
+// pintos run 'cmp file file2'
 
+
+// pintos -p ./examples/cmp -a cmp -- -q
+// pintos run 'cmp file file2'
+// pintos run 'ls'
 // Remove the -q to run the thing without quiting
+
+// pintos -v -p ./args-none -a args-none -- -q run args-none
+// pintos -v -p ./args-many -a args-many -- -q run args-many
+// pintos -v -p ./args-multiple-a args-multiple -- -q run args-multiple
+// pintos -v -p ./args-none -a args-none -- -q run args-none
+// pintos -v -p ./args-none -a args-none -- -q run args-none
+// pintos -v -p ./args-none -a args-none -- -q run args-none
+// pintos -v -p ./args-none -a args-none -- -q run args-none

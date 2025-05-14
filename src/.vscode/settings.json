@@ -7,6 +7,10 @@
     "thread.h": "c",
     "stdint.h": "c",
     "syscall.h": "c",
-    "type_traits": "c"
+    "type_traits": "c",
+    "random": "c",
+    "*.inc": "c",
+    "atomic": "c",
+    "cstdlib": "c"
   }
 }

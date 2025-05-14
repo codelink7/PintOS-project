@@ -166,50 +166,43 @@ tid_t
 thread_create (const char *name, int priority,
 		thread_func *function, void *aux)
 {
-	struct thread *t;
-	struct kernel_thread_frame *kf;
-	struct switch_entry_frame *ef;
-	struct switch_threads_frame *sf;
-	tid_t tid;
-	enum intr_level old_level;
+  struct thread *t;
+  struct kernel_thread_frame *kf;
+  struct switch_entry_frame *ef;
+  struct switch_threads_frame *sf;
+  tid_t tid;
 
-	ASSERT (function != NULL);
+  ASSERT (function != NULL);
 
-	/* Allocate thread. */
-	t = palloc_get_page (PAL_ZERO);
-	if (t == NULL)
-		return TID_ERROR;
+  /* Allocate thread. */
+  t = palloc_get_page (PAL_ZERO);
+  if (t == NULL)
+    return TID_ERROR;
 
-	/* Initialize thread. */
-	init_thread (t, name, priority);
-	tid = t->tid = allocate_tid ();
+  /* Initialize thread. */
+  init_thread (t, name, priority);
+  tid = t->tid = allocate_tid ();
+  //achieve parent child communication
+  t->parent_thread=thread_current();
+  /* Stack frame for kernel_thread(). */
+  kf = alloc_frame (t, sizeof *kf);
+  kf->eip = NULL;
+  kf->function = function;
+  kf->aux = aux;
 
-	/* Prepare thread for first run by initializing its stack.
-     Do this atomically so intermediate values for the 'stack' 
-     member cannot be observed. */
-	old_level = intr_disable ();
+  /* Stack frame for switch_entry(). */
+  ef = alloc_frame (t, sizeof *ef);
+  ef->eip = (void (*) (void)) kernel_thread;
 
-	/* Stack frame for kernel_thread(). */
-	kf = alloc_frame (t, sizeof *kf);
-	kf->eip = NULL;
-	kf->function = function;
-	kf->aux = aux;
+  /* Stack frame for switch_threads(). */
+  sf = alloc_frame (t, sizeof *sf);
+  sf->eip = switch_entry;
+  sf->ebp = 0;
 
-	/* Stack frame for switch_entry(). */
-	ef = alloc_frame (t, sizeof *ef);
-	ef->eip = (void (*) (void)) kernel_thread;
+  /* Add to run queue. */
+  thread_unblock (t);
 
-	/* Stack frame for switch_threads(). */
-	sf = alloc_frame (t, sizeof *sf);
-	sf->eip = switch_entry;
-	sf->ebp = 0;
-
-	intr_set_level (old_level);
-
-	/* Add to run queue. */
-	thread_unblock (t);
-
-	return tid;
+  return tid;
 }
 
 /* Puts the current thread to sleep.  It will not be scheduled
@@ -459,30 +452,32 @@ is_thread (struct thread *t)
 static void
 init_thread (struct thread *t, const char *name, int priority)
 {
-	enum intr_level old_level;
+  enum intr_level old_level;
+  ASSERT (t != NULL);
+  ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
+  ASSERT (name != NULL);
 
-	ASSERT (t != NULL);
-	ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
-	ASSERT (name != NULL);
+  memset (t, 0, sizeof *t);
+  t->status = THREAD_BLOCKED;
+  strlcpy (t->name, name, sizeof t->name);
+  t->stack = (uint8_t *) t + PGSIZE;
+  t->priority = priority;
+  t->magic = THREAD_MAGIC;
 
-	memset (t, 0, sizeof *t);
-	t->status = THREAD_BLOCKED;
-	strlcpy (t->name, name, sizeof t->name);
-	t->stack = (uint8_t *) t + PGSIZE;
-	t->priority = priority;
-	t->magic = THREAD_MAGIC;
-
-	// Init the lists for opened files and for the children
-	list_init(&t->opened_files_list);
+  
+  sema_init(&t->ipc_semaphore,0);
+  list_init(&t->opened_files_list);
+  sema_init(&t->parent_waits_for_child,0);
   list_init(&t->children);
 
-	// Init the semaphores that are used for sync between the parent and the child
-  sema_init(&t->semaphore_for_communication, 0);
-  sema_init(&t->parent_waits_for_child, 0);
+  t->parent_thread = running_thread();
+  t->last_file_descriptor = 2;
+  t->child_exit_status = -2;
 
-	old_level = intr_disable ();
-	list_push_back (&all_list, &t->allelem);
-	intr_set_level (old_level);
+  
+  old_level = intr_disable ();
+	list_push_back(&all_list, &t->allelem);
+	intr_set_level(old_level);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

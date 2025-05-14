@@ -17,7 +17,6 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
-
 /* Used for setup_stack */
 static void push_stack(int order, void **esp, char *token, char **argv, int argc);
 static void close_all_opened_files(struct thread *);
@@ -33,26 +32,51 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp, char** s
 tid_t
 process_execute (const char *file_name) 
 {
-	char *fn_copy;
-	tid_t tid;
+  char* fn_copy;
+  char*arg;
+  tid_t tid;
 
-	/* Make a copy of FILE_NAME.
+  
+  
+  arg=malloc(strlen(file_name)+1);
+  // ensuring it does not exceed the size of the buffer
+  strlcpy(arg, file_name , strlen(file_name)+1) ; 
+//error handling if file is corrupted
+ /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-	fn_copy = palloc_get_page (0);
-	if (fn_copy == NULL)
-		return TID_ERROR;
-	strlcpy (fn_copy, file_name, PGSIZE);
+  fn_copy = palloc_get_page (0);
+  if (fn_copy == NULL) {
+    palloc_free_page(fn_copy);
 
-	/* Parsed file name */
-	char *save_ptr;
-	file_name = strtok_r((char *) file_name, " ", &save_ptr);
+    return TID_ERROR;
+  }
+  strlcpy (fn_copy, file_name, PGSIZE); 
 
-	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-	if (tid == TID_ERROR)
-		palloc_free_page (fn_copy);
-	return tid;
-}
+  /* Extract the exec_name from the file name */ 
+  char* tokenptr ;
+  arg= strtok_r(arg, " " , &tokenptr ) ; 
+
+  /* Create a new thread to execute FILE_NAME. */
+  //name of the thread is arg ,fn_copy is passed to start_process
+  tid = thread_create (arg, PRI_DEFAULT, start_process, fn_copy);
+  free(arg);
+  
+  if (tid == TID_ERROR)
+  {
+    palloc_free_page(fn_copy);
+    return TID_ERROR;
+  }
+//wait until child is created
+  sema_down(&thread_current()->ipc_semaphore);
+
+  if (!thread_current()->child_success) 
+  {
+    return TID_ERROR;
+  }
+
+  return tid;
+} 
+
 
 /* A thread function that loads a user process and starts it
    running. */
@@ -79,6 +103,16 @@ start_process (void *file_name_)
 	if (!success)
 		thread_exit ();
 
+		       //child created successfully
+    thread_current()->parent_thread->child_success = true;
+    //push child into parent list
+    list_push_back(&thread_current()->parent_thread->children,&thread_current()->child_elem);
+     //wake up parent
+    sema_up(&thread_current()->parent_thread->ipc_semaphore);
+    //child wait
+    sema_down(&thread_current()->ipc_semaphore);
+    
+ 
 	/* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -101,9 +135,23 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-	// Here we have to use the parent_waits_for_child semaphore, and do a sema_down beacuse
-	// because we're waiting for a child and it will sema_up the parent in process_exit
-	return -1;
+  struct thread *parent = thread_current();
+  struct thread *child = NULL;
+  for (struct list_elem *e = list_begin(&parent->children);
+       e != list_end(&parent->children); e = list_next(e)) {
+    struct thread *child_process = list_entry(e, struct thread, child_elem);
+    if (child_process->tid == child_tid) {
+      child = child_process;
+      break;
+    }
+  }
+  if (child != NULL) {
+    list_remove(&child->child_elem);
+    sema_up(&child->ipc_semaphore);
+    sema_down(&parent->parent_waits_for_child);
+    return parent->child_exit_status;
+  }
+  return -1;
 }
 
 /* Free the current process's resources. */
@@ -117,13 +165,15 @@ process_exit (void)
 	// Closes all the opened files by this thread
 	close_all_opened_files(cur);
 
+
 	// Closing the file that is being executed currently by this thread (If there was any)
-	if (cur->currently_exec_file) {
+	if (cur->currently_exec_file != NULL) {
 		file_close(cur->currently_exec_file);
 		// file_allow_write(cur->currently_exec_file);  /* It's not required in this phase */
 		cur->currently_exec_file = NULL; 
 	}
 
+	// parent -> process_wait(5); current_thread
 	// Waking up the parent if it was waiting for me
 	if (cur->parent_thread != NULL) sema_up(
 		&cur->
@@ -181,7 +231,7 @@ static void wake_up_all_children(struct thread *cur){
 			child_elem
 		);
 		child_thread->parent_thread = NULL;
-		sema_up(&child_thread->semaphore_for_communication);
+		sema_up(&child_thread->ipc_semaphore);
 	}
 }
 

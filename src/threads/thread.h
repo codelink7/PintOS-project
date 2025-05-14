@@ -100,6 +100,7 @@ struct thread
     struct file *currently_exec_file;     /* A pointer to the file being currently executed*/
     struct list children;                 /* A list that contains all the children of the thread*/
     struct list_elem child_elem;
+    bool child_success;
    /*
    A semaphore that is used when the parent is 
    waiting for the child to exit. It means, when the parent 
@@ -112,8 +113,8 @@ struct thread
    A semaphore used to synchronize the actions of 
    the child and the parent during process startup.
    */
-   struct semaphore semaphore_for_communication;
-
+   struct semaphore ipc_semaphore;
+   
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
