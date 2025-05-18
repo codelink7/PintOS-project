@@ -4,7 +4,7 @@
 #include "userprog/gdt.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
-
+#include "threads/vaddr.h"
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
@@ -140,6 +140,24 @@ page_fault (struct intr_frame *f)
      be assured of reading CR2 before it changed). */
   intr_enable ();
 
+   
+  if (is_user_vaddr(fault_addr)) {
+    struct thread *t = thread_current();
+    if (t->pagedir == NULL || !pagedir_get_page(t->pagedir, fault_addr)) {
+      /* Invalid memory access - terminate the process */
+      printf ("%s: exit(-1)\n", thread_name ());
+      thread_exit (); 
+      NOT_REACHED ();
+    }
+  } else if (fault_addr == NULL){
+      printf ("%s: exit(-1)\n", thread_name ());
+      thread_exit (); 
+      NOT_REACHED ();
+  } else if (!is_user_vaddr(fault_addr)){
+      printf ("%s: exit(-1)\n", thread_name ());
+      thread_exit (); 
+      NOT_REACHED ();
+  }
   /* Count page faults. */
   page_fault_cnt++;
 

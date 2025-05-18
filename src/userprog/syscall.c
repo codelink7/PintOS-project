@@ -24,24 +24,8 @@ void syscall_seek(struct intr_frame *);
 unsigned syscall_tell(struct intr_frame *);
 void syscall_close(struct intr_frame *);
 
-/*
-  We only use one lock because we're protecting the 
-  structure that is shared between the files not the content of the file itself
-
-  Some Additional information about the locking
-  Here's the key idea:
-  Even if different threads access different files, 
-  they all use the same shared file system structures like inode tables, 
-  file descriptor tables, or directory trees. These structures must be protected.
-  So even if you're opening fileA.txt and someone else is writing to fileB.txt, they both:
-  Might allocate an inode,
-  Might read or update metadata (like open counts, file positions),
-  Might trigger disk I/O.
-  This is why a global lock is used to protect the critical section across all file operations.
-*/
 
 static struct lock locker_for_all_files; 
-
 
 void
 syscall_init (void) 
@@ -90,16 +74,7 @@ syscall_handler (struct intr_frame *f)
         break;
       case SYS_EXEC:
         //ensure memory address of the pointer is valid
-        if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
-        //retrieve the second argument of the system call and cast it 
-        int* arg_ptr = (int*)f->esp + 1;
-        int arg_value = *arg_ptr;
-        char* the_arg = (char*)arg_value;
-        if (the_arg == NULL || !is_valid_user_pointer(the_arg)) syscall_exit(-1);
-        lock_acquire(&locker_for_all_files);
-        //execute program and return 
-        f->eax = process_execute(the_arg);
-        lock_release(&locker_for_all_files);
+        f->eax = syscall_exec(f);
         break;
       case SYS_WAIT:
         f->eax = syscall_wait(f);
@@ -202,7 +177,6 @@ bool
 syscall_remove(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   char *filename = *(char **)(f->esp + 4);
-  // printf("File name: %s\n", filename);
   if (filename == NULL || !is_valid_user_pointer(filename)) syscall_exit(-1);
   bool removing_result;
   lock_acquire(&locker_for_all_files);
@@ -216,7 +190,6 @@ uint32_t
 syscall_filesize(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   int file_descriptor = *(int *)(f->esp + 4);
-  // printf("File descriptor is: %d\n", file_descriptor);
   uint32_t file_length_uint32_t;
   struct opened_file_struct *opened_file = get_open_file_by_fd(file_descriptor);
   if (opened_file == NULL) return -1;
@@ -227,22 +200,7 @@ syscall_filesize(struct intr_frame *f){
   return file_length_uint32_t;
 }
 
-/*
-  Additional Information about the char * pointer:
-    So, f->esp + 4 contains the value of the filename pointer — 
-    but that pointer itself points to a string in user memory.
-    Step-by-Step Dissection
-    (char **)(f->esp + 4)
-    f->esp + 4:
-    This moves 4 bytes up the stack to where the first argument is stored (the filename pointer).
-    (char **):
-    You cast it to char **, meaning:
-    "Interpret this address as a pointer to a char *"
-    Because the user put a char * on the stack.
-    *(char **):
-    Now you dereference it — you go to that memory location, and grab the char * value stored there.
-    In other words: you're pulling out the actual address of the filename string.
-*/
+
 
 bool 
 syscall_create(struct intr_frame *f){
@@ -281,7 +239,6 @@ unsigned
 syscall_tell(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   int file_descriptor = *(int *)(f->esp + 4);
-  // printf("File descriptor is: %d\n", file_descriptor);
   uint32_t telling_file_result;
   struct opened_file_struct *file_to_be_telled = get_open_file_by_fd(file_descriptor);
   if (file_to_be_telled == NULL) return (unsigned) -1;
@@ -297,9 +254,7 @@ syscall_seek(struct intr_frame *f){
   if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
   if (!is_valid_user_pointer(f->esp + 8)) syscall_exit(-1);
   int file_descriptor = *(int *)(f->esp + 4);
-  // printf("File descriptor is: %d\n", file_descriptor);
   uint32_t position_to_be_seeked = *(int *)(f->esp + 8);
-  // printf("Position to be seeked: %d\n", position_to_be_seeked);
   struct opened_file_struct *file_to_be_seeked = get_open_file_by_fd(file_descriptor);
   if (file_to_be_seeked == NULL) return;
   lock_acquire(&locker_for_all_files);
@@ -307,21 +262,6 @@ syscall_seek(struct intr_frame *f){
   file_seek(file_to_be_seeked->ptr, position_to_be_seeked);
   lock_release(&locker_for_all_files);
 }
-
-/*
-  Information about the buffer:
-    void *buffer = *(void **)(f->esp + 8);  // 3rd argument
-    That means:
-    The user passed a char * as the buffer
-    That pointer is stored on the stack at f->esp + 8
-    You retrieve it using a double pointer (void **), then dereference to get the real buffer address
-    🔹 ((char *)buffer)[i]
-    This accesses the i-th byte of the buffer.
-    Think of buffer as an array of bytes: you're writing into the i-th position.
-    So:
-    ((char *)buffer)[0] = first character from input
-    ((char *)buffer)[1] = second character from input
-*/
 
 int 
 syscall_read(struct intr_frame *f){
@@ -404,6 +344,18 @@ int syscall_wait(struct intr_frame *f){
   return process_wait(thread_id);
 }
 
+tid_t syscall_exec(struct intr_frame *f){
+  tid_t process_id;
+  if (!is_valid_user_pointer(f->esp + 4)) syscall_exit(-1);
+  int* arg_ptr = (int*)f->esp + 1;
+  int arg_value = *arg_ptr;
+  char* the_arg = (char*)arg_value;
+  if (the_arg == NULL || !is_valid_user_pointer(the_arg)) syscall_exit(-1);
+  lock_acquire(&locker_for_all_files);
+  process_id = process_execute(the_arg);
+  lock_release(&locker_for_all_files);
+  return process_id;
+}
 
 // Docker Command
 // sudo docker run --platform linux/amd64 --rm -it -v "$(pwd)/PintOS-project:/root/pintos" a85bf0a348d6a4bdca899d54f162da5b76f60aaf6107808c745c3cefbaa6f644
@@ -411,31 +363,8 @@ int syscall_wait(struct intr_frame *f){
 // Commands to run the code
 // pintos-mkdisk filesys.dsk --filesys-size=2
 // pintos -f -q -> This is for formating
-// pintos -p ./examples/halt -a halt -- -q -> Copying the file to the pintos
-// pintos run 'halt' -> Running the file without -q flag
-
-// pintos -p ./examples/echo -a echo -- -q -> Copying the program
-// pintos run 'echo 1' -> Running the program with one argument
-
-// pintos -p ./examples/cat -a cat -- -q -> Copying the cat program
-// pintos -p ./file -a file -- -q -> Copying a useless file that will be used in the testing
-// pintos run 'cat file' -> Running the program
-// pintos -p ./examples/cp -a cp -- -q
-// pintos run 'cp file file2'
-// pintos -p ./examples/ls -a ls -- -q
-// pintos run 'cmp file file2'
-
-
-// pintos -p ./examples/cmp -a cmp -- -q
-// pintos run 'cmp file file2'
-// pintos run 'ls'
-// Remove the -q to run the thing without quiting
 
 // pintos -v -p ./args-none -a args-none -- -q run args-none
 // pintos -v -p ./args-many -a args-many -- -q run args-many
 // pintos -v -p ./args-multiple-a args-multiple -- -q run args-multiple
-// pintos -v -p ./args-none -a args-none -- -q run args-none
-// pintos -v -p ./args-none -a args-none -- -q run args-none
-// pintos -v -p ./args-none -a args-none -- -q run args-none
-// pintos -v -p ./args-none -a args-none -- -q run args-none
 // pintos -v -p ./sc-boundary-3 -a sc-boundary-3  -- -q run sc-boundary-3

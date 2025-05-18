@@ -17,6 +17,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+
 /* Used for setup_stack */
 static void push_stack(int order, void **esp, char *token, char **argv, int argc);
 static void close_all_opened_files(struct thread *);
@@ -29,44 +30,54 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp, char** s
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
+
 tid_t
 process_execute (const char *file_name) 
 {
-  char* fn_copy;
-  char*arg;
+  char *fn_copy;
+  char *process_arg;
   tid_t tid;
 
   
-  
-  arg=malloc(strlen(file_name)+1);
+  if (file_name == NULL) return TID_ERROR;
+  process_arg = malloc(strlen(file_name) + 1 );
   // ensuring it does not exceed the size of the buffer
-  strlcpy(arg, file_name , strlen(file_name)+1) ; 
-//error handling if file is corrupted
- /* Make a copy of FILE_NAME.
+  strlcpy(process_arg, file_name , strlen(file_name)+1) ; 
+	//error handling if file is corrupted
+
+ 	/* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL) {
     palloc_free_page(fn_copy);
-
     return TID_ERROR;
   }
+
   strlcpy (fn_copy, file_name, PGSIZE); 
 
   /* Extract the exec_name from the file name */ 
-  char* tokenptr ;
-  arg= strtok_r(arg, " " , &tokenptr ) ; 
-
+  char *tokenptr;
+  process_arg = strtok_r(process_arg, " " , &tokenptr ) ; 
+	struct file *test_file = filesys_open(process_arg);
+	test_file = filesys_open(process_arg);
+	if (test_file == NULL) {
+			free(process_arg);
+			return TID_ERROR;
+	}
+	file_close(test_file);
   /* Create a new thread to execute FILE_NAME. */
-  //name of the thread is arg ,fn_copy is passed to start_process
-  tid = thread_create (arg, PRI_DEFAULT, start_process, fn_copy);
-  free(arg);
+
+  // Name of the thread is process_arg, fn_copy is passed to start_process
+  tid = thread_create (process_arg, PRI_DEFAULT, start_process, fn_copy);
+  free(process_arg);
   
   if (tid == TID_ERROR)
   {
     palloc_free_page(fn_copy);
     return TID_ERROR;
   }
-//wait until child is created
+
+  // Wait until child is created
   sema_down(&thread_current()->ipc_semaphore);
 
   if (!thread_current()->child_success) 
@@ -97,22 +108,24 @@ start_process (void *file_name_)
 	if_.cs = SEL_UCSEG;
 	if_.eflags = FLAG_IF | FLAG_MBS;
 	success = load (file_name, &if_.eip, &if_.esp, &save_ptr);
-
 	/* If load failed, quit. */
 	palloc_free_page (file_name);
 	if (!success)
 		thread_exit ();
 
-		       //child created successfully
-    thread_current()->parent_thread->child_success = true;
-    //push child into parent list
-    list_push_back(&thread_current()->parent_thread->children,&thread_current()->child_elem);
-     //wake up parent
-    sema_up(&thread_current()->parent_thread->ipc_semaphore);
-    //child wait
-    sema_down(&thread_current()->ipc_semaphore);
-    
- 
+	// This tells the parent that the child was loaded successfully and can run
+	thread_current()->parent_thread->child_success = true;
+
+	// Pushing the child into the list of children
+	list_push_back(&thread_current()->parent_thread->children, &thread_current()->child_elem);
+
+	// Now the parent can continue execution
+	sema_up(&thread_current()->parent_thread->ipc_semaphore);
+
+	// The child waits for the parent and can't continue execution until the parent calls syscall_wait();
+	sema_down(&thread_current()->ipc_semaphore);
+
+
 	/* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -133,7 +146,7 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
   struct thread *parent = thread_current();
   struct thread *child = NULL;
@@ -169,7 +182,7 @@ process_exit (void)
 	// Closing the file that is being executed currently by this thread (If there was any)
 	if (cur->currently_exec_file != NULL) {
 		file_close(cur->currently_exec_file);
-		// file_allow_write(cur->currently_exec_file);  /* It's not required in this phase */
+		file_allow_write(cur->currently_exec_file);  /* It's not required in this phase */
 		cur->currently_exec_file = NULL; 
 	}
 
