@@ -221,7 +221,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
     if (timer_ticks () % 4 == 0)
       thread_foreach (recalculate_priority_func, NULL);
 
-    intr_set_level(old_level);
+    intr_set_level(old_level); // Renable Interrupts
   }
 
   while (!list_empty(&threads_sleep_list)){

@@ -540,9 +540,9 @@ thread_get_load_avg (void)
 fixed_point_t
 thread_get_recent_cpu (void) 
 {
-  // enum intr_level old_level = intr_disable ();
+  enum intr_level old_level = intr_disable ();
   int recent_cpu_times_100 = FP_TO_INT_ROUND_NEAREST(FP_MULT_INT(thread_current()->recent_cpu, 100));
-  // intr_set_level (old_level);
+  intr_set_level (old_level);
   return recent_cpu_times_100;
 }
 
